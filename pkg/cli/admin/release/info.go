@@ -137,6 +137,7 @@ func NewInfo(f kcmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Com
 	flags.BoolVar(&o.IncludeImages, "include-images", o.IncludeImages, "When displaying JSON output of a release output the images the release references.")
 	flags.StringVar(&o.FileDir, "dir", o.FileDir, "The directory on disk that file:// images will be copied under.")
 	flags.BoolVar(&o.SkipBugCheck, "skip-bug-check", o.SkipBugCheck, "Do not check bug statuses when running generating bug listing with --output=name")
+	flags.BoolVar(&o.RepositoriesWithManifests, "repos-with-manifests", o.RepositoriesWithManifests, "Output github repositories with corresponding manifests (org, name, manifest)")
 	return cmd
 }
 
@@ -158,6 +159,8 @@ type InfoOptions struct {
 	ShowPullSpec    bool
 	ShowSize        bool
 	Verify          bool
+
+	RepositoriesWithManifests bool
 
 	ChangelogDir string
 	BugsDir      string
@@ -524,10 +527,71 @@ func diffContents(a, b string, out io.Writer) error {
 	return nil
 }
 
+func (o *InfoOptions) showRepositoriesWithManifests(release *ReleaseInfo) error {
+	for _, tag := range release.References.Spec.Tags {
+		if tag.From == nil || tag.From.Kind != "DockerImage" {
+			continue
+		}
+		image := tag.From.Name
+
+		ref, err := imagesource.ParseReference(image)
+		if err != nil {
+			return err
+		}
+
+		opts := extract.NewExtractOptions(genericclioptions.IOStreams{Out: o.Out, ErrOut: o.ErrOut})
+		opts.SecurityOptions = o.SecurityOptions
+		opts.FileDir = o.FileDir
+
+		repoURL := tag.Annotations[annotationBuildSourceLocation]
+		repoURL = strings.ReplaceAll(repoURL, "https://github.com/", "git@github.com:")
+
+		opts.OnlyFiles = true
+		opts.Mappings = []extract.Mapping{
+			{
+				ImageRef: ref,
+
+				From:        "manifests/",
+				To:          ".",
+				LayerFilter: extract.NewPositionLayerFilter(-1),
+				ConditionFn: func(m *extract.Mapping, dgst digest.Digest, imageConfig *dockerv1client.DockerImageConfig) (bool, error) {
+					var labels map[string]string
+					if imageConfig.Config != nil {
+						labels = imageConfig.Config.Labels
+					}
+					if len(labels[annotationReleaseOperator]) == 0 {
+						return false, nil
+					}
+					return true, nil
+				},
+			},
+		}
+		opts.TarEntryCallback = func(hdr *tar.Header, _ extract.LayerInfo, r io.Reader) (bool, error) {
+			if ext := path.Ext(hdr.Name); len(ext) > 0 && (ext == ".yaml" || ext == ".yml" || ext == ".json") {
+				repoFileName := hdr.Name
+				manifestFileName := repoFileName
+				if !strings.HasPrefix(repoFileName, "0000_") {
+					manifestFileName = fmt.Sprintf("0000_50_%s_%s", tag.Name, repoFileName)
+				}
+				fmt.Fprintf(o.Out, "%s %s %s %s\n", tag.Name, repoURL, repoFileName, manifestFileName)
+			}
+			return true, nil
+		}
+		err = opts.Run()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (o *InfoOptions) describeImage(release *ReleaseInfo) error {
 	if o.ShowContents {
 		_, err := io.Copy(o.Out, newContentStreamForRelease(release))
 		return err
+	}
+	if o.RepositoriesWithManifests {
+		return o.showRepositoriesWithManifests(release)
 	}
 	if len(o.OmitsAnnotation) > 0 {
 		fileNames := make([]string, 0, len(release.ManifestFiles))
