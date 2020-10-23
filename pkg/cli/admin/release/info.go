@@ -615,7 +615,11 @@ func (o *InfoOptions) describeImage(release *ReleaseInfo) error {
 					}
 				}
 				if !found {
-					fmt.Fprintf(o.Out, "%s: %s/%s\n", name, m.Obj.GetKind(), m.Obj.GetName())
+					kind := m.Obj.GetKind()
+					groupVersion := m.Obj.GetAPIVersion()
+					objName := m.Obj.GetName()
+					objNS := m.Obj.GetNamespace()
+					fmt.Fprintf(o.Out, "%s %s %s %s %s\n", name, kind, groupVersion, objName, objNS)
 				}
 			}
 		}
