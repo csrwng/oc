@@ -126,6 +126,7 @@ func NewInfo(f kcmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Com
 
 	flags.BoolVar(&o.ShowContents, "contents", o.ShowContents, "Display the contents of a release.")
 	flags.StringVar(&o.OmitsAnnotation, "omits-annotation", o.OmitsAnnotation, "Display the manifests that omit a particular annotation.")
+	flags.StringVar(&o.IncludesAnnotation, "includes-annotation", o.IncludesAnnotation, "Display the manifests that include a particular annotation.")
 	flags.BoolVar(&o.ShowCommit, "commits", o.ShowCommit, "Display information about the source an image was created with.")
 	flags.BoolVar(&o.ShowCommitURL, "commit-urls", o.ShowCommitURL, "Display a link (if possible) to the source code.")
 	flags.BoolVar(&o.ShowPullSpec, "pullspecs", o.ShowPullSpec, "Display the pull spec of each image instead of the digest.")
@@ -149,16 +150,17 @@ type InfoOptions struct {
 	From    string
 	FileDir string
 
-	Output          string
-	ImageFor        string
-	OmitsAnnotation string
-	IncludeImages   bool
-	ShowContents    bool
-	ShowCommit      bool
-	ShowCommitURL   bool
-	ShowPullSpec    bool
-	ShowSize        bool
-	Verify          bool
+	Output             string
+	ImageFor           string
+	OmitsAnnotation    string
+	IncludesAnnotation string
+	IncludeImages      bool
+	ShowContents       bool
+	ShowCommit         bool
+	ShowCommitURL      bool
+	ShowPullSpec       bool
+	ShowSize           bool
+	Verify             bool
 
 	RepositoriesWithManifests bool
 
@@ -396,6 +398,9 @@ func (o *InfoOptions) Validate() error {
 	if len(o.OmitsAnnotation) > 0 {
 		count++
 	}
+	if len(o.IncludesAnnotation) > 0 {
+		count++
+	}
 	if o.ShowSize {
 		count++
 	}
@@ -593,7 +598,13 @@ func (o *InfoOptions) describeImage(release *ReleaseInfo) error {
 	if o.RepositoriesWithManifests {
 		return o.showRepositoriesWithManifests(release)
 	}
-	if len(o.OmitsAnnotation) > 0 {
+	if len(o.OmitsAnnotation) > 0 || len(o.IncludesAnnotation) > 0 {
+		omit := true
+		searchFor := o.OmitsAnnotation
+		if len(searchFor) == 0 {
+			searchFor = o.IncludesAnnotation
+			omit = false
+		}
 		fileNames := make([]string, 0, len(release.ManifestFiles))
 		for name := range release.ManifestFiles {
 			fileNames = append(fileNames, name)
@@ -609,12 +620,12 @@ func (o *InfoOptions) describeImage(release *ReleaseInfo) error {
 				annotations := m.Obj.GetAnnotations()
 				found := false
 				for key := range annotations {
-					if key == o.OmitsAnnotation {
+					if key == searchFor {
 						found = true
 						break
 					}
 				}
-				if !found {
+				if (omit && !found) || (found && !omit) {
 					kind := m.Obj.GetKind()
 					groupVersion := m.Obj.GetAPIVersion()
 					objName := m.Obj.GetName()
